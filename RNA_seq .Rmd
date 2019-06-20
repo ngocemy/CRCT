@@ -1,0 +1,352 @@
+---
+title: "RNA_seq analysis (BLUEPRINT) on top of PCHiC map from Javiere2016"
+output: html_notebook
+---
+
+Data from Monocyte RNA-seq (2016) from BLUEPRINT, filter PCHiC value for Monocyte > 5 from Javiere2016 
+
+
+an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* **button** within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+
+
+- Import libraries
+```{r message=FALSE}
+library(igraph)
+library(GenomicRanges)
+library(readr)
+library(tidyr)
+library(dplyr)
+library(data.table)
+```
+
+**Generating the RNA-seq table data**
+
+*This is for me*
+```{r warning=FALSE}
+setwd('/home/ngoc/Desktop/Ngoc_CRCT/2nd week')
+```
+
+- Read in files
+
+```{r, message=FALSE, eval=FALSE}
+main_data<-read_tsv('/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/data/EGAD00001002308/C000S5B1.gene_quantification.rsem_grape2_crg.GRCh38.20150622.results')
+main_data<-main_data[,1]
+
+common_path = "/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/data"
+primary_dirs = list.files(common_path);
+```
+
+```{r}
+primary_dirs
+```
+
+```{r, eval=FALSE,message=FALSE}
+for(dir in primary_dirs) {
+  files_list = list.files(paste(common_path,dir,sep = "/"))
+  ## read in data 
+  for (file in files_list) {
+    temp_data = read_tsv(file = paste(common_path,dir,file,sep = "/"))
+  ## append
+    
+    main_data = bind_cols(main_data,temp_data['FPKM']);
+    colnames(main_data)[colnames(main_data) == 'FPKM'] <- paste(dir,substr(file,1,8),sep = '-')
+  }}
+write_csv(main_data,path='RNA_seq_data.csv')
+
+```
+
+```{r}
+main_data
+```
+
+
+- Overlapping ENS id with chromosome fragment to get the chr_start_end ID
+```{r ,message=FALSE, eval=FALSE, warning=FALSE}
+annotation<-read_tsv('/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/HindIII_annotation_ens37.txt',col_types = cols(Chr = col_character()) )
+colnames(annotation)[colnames(annotation) == 'gene_id'] <-'gene_name'
+
+annotation$ID<-paste(annotation$Chr,annotation$Start,annotation$End,sep = '_')
+annotation<- drop_na(annotation, ensembl_id)
+annotation<-annotation[annotation$ensembl_id != 'uce',]
+annotation<-separate(annotation,ensembl_id,sep=',',into = c(paste('ID',seq(1,6),sep = '')))
+
+#remove '.' part in ensemble id in rna-seq data
+main_data$gene_id<-gsub("\\..*","",main_data$gene_id)
+
+anno1<-merge(main_data,annotation,by.y='ID1',by.x='gene_id')
+anno2<-merge(main_data,annotation,by.y='ID2',by.x='gene_id')
+anno3<-merge(main_data,annotation,by.y='ID3',by.x='gene_id')
+anno4<-merge(main_data,annotation,by.y='ID4',by.x='gene_id')
+anno5<-merge(main_data,annotation,by.y='ID5',by.x='gene_id')
+anno6<-merge(main_data,annotation,by.y='ID6',by.x='gene_id')
+
+```
+
+- Delete other non-numeric columns
+
+```{r}
+mean_value<-bind_rows(anno2, anno3,anno1,anno4,anno6,anno5) %>%
+    select (-c(gene_id,paste('ID',seq(1,6),sep = ''),region)) %>%
+    group_by(ID,gene_name,Chr,Start,End) %>%
+    summarise_all("mean")
+mean_value
+write_csv(mean_value,path = 'mean_value_rnaseq_with_chromosome_ID.csv')
+```
+- Put feature RNA-seq into GRanges object 
+```{r}
+bedepi <- with(mean_value, GRanges(Chr, ranges=IRanges(Start, End),strand=Rle(strand(rep("*", nrow(mean_value))))))
+mcols(bedepi) <- mean_value[,-c(1:5)]
+names(bedepi) <- mean_value$ID
+```
+
+- Merge with PCHiC data
+
+
+*This part is from https://github.com/VeraPancaldiLab/Chromatin_Assortativity/blob/master/Scripts/Process_Assort.r#L71*
+```{r, message=FALSE, eval=FALSE}
+PCHiC_map<- read_tsv('/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/PCHiCJavierreCell2016_merged_samples_12Apr2015_full.txt', skip =5, col_types = cols(oeChr = col_character(),baitChr = col_character()) )
+
+```
+
+```{r}
+PCHiC_map
+```
+
+
+
+
+- Filter interactions with > 5 in wildtype cells 
+
+
+```{r}
+PCHiC_wt<-PCHiC_map[,c(12:28)]
+PCHiC_wt <- PCHiC_map[rowSums(PCHiC_map[,c(12:28)] > 5) > 1, ]
+PCHiC_wt$baits <- paste(PCHiC_wt$baitChr, PCHiC_wt$baitStart, PCHiC_wt$baitEnd, sep = "_")
+PCHiC_wt$OEs <- paste(PCHiC_wt$oeChr, PCHiC_wt$oeStart, PCHiC_wt$oeEnd, sep = "_")
+PCHiC_wt
+dim(PCHiC_wt)
+```
+```{r}
+PCHiC_map
+dim(PCHiC_map)
+```
+
+- Get unique bait regions and promoter OE regions and non-promoter OE regions
+
+```{r}
+PCHiC_baits <- unique(PCHiC_wt$baits)
+PCHiC_OE_all <- unique(PCHiC_wt$OEs)
+
+PCHiC_PromOE <- PCHiC_OE_all[which(PCHiC_OE_all %in% PCHiC_baits)]
+PCHiC_nonPromOE <- PCHiC_OE_all[-which(PCHiC_OE_all %in% PCHiC_baits)]
+```
+
+- Create igraph networks
+```{r}
+PCHiC_wholenet <- graph_from_data_frame(PCHiC_wt[,c(29:30)], directed = FALSE)
+PCHiC_PP <- delete.vertices(PCHiC_wholenet, V(PCHiC_wholenet)[which(V(PCHiC_wholenet)$name %in% PCHiC_nonPromOE)])
+PCHiC_POE <- delete.vertices(PCHiC_wholenet, V(PCHiC_wholenet)[which(V(PCHiC_wholenet)$name %in% PCHiC_PromOE)])
+```
+
+
+- Put all bait and all OE regions into a BED file format and then GRanges object
+
+```{r}
+colnames(PCHiC_wt)[c(1:3, 6:8)] <- rep(c("chr", "start", "end"), 2)
+PCHiC_bed <- unique(rbind(PCHiC_wt[,c(1:3)], PCHiC_wt[,c(6:8)]))
+PCHiC_GRange <- with(PCHiC_bed, GRanges(chr, IRanges(start, end)))
+PCHiC_GRange$ID <- paste(PCHiC_bed$chr, PCHiC_bed$start,PCHiC_bed$end, sep = "_")
+```
+
+
+
+- Overlap peaks with PHiC fragments and feature fragements
+```{r}
+overlaps <- findOverlaps(PCHiC_GRange, bedepi)
+overlaps
+```
+
+- Matching overlapping bedchicmore IDs (start) with ChIP-seq features
+```{r}
+match_hit <- data.frame(PCHiC_GRange$ID[queryHits(overlaps)],as.data.frame(mcols(bedepi)[subjectHits(overlaps),]),stringsAsFactors=T)
+colnames(match_hit)[1] <- "fragment"
+match_hit
+```
+
+
+- Aggregate windows in fragments, collapse fragments
+```{r}
+data.dt <- data.table(match_hit)
+setkey(data.dt, fragment) #sorts ascending by fragment
+agchic <- data.frame(data.dt[, lapply(.SD, mean), by = fragment]) #mean of ChIP-seq features by fragment
+agchic <- data.frame(agchic[,-1], row.names = agchic[,1])
+agchic
+```
+
+  - Function to calculate assortativity from Miguel
+
+```{r}
+calc_assort <- function(G, data){
+  names <- colnames(data)
+  ass <- list()
+  G_epi <- list()
+  for (i in c(1:ncol(data))){
+    G <- set.vertex.attribute(G, names[i],value = data[V(G)$name, names[i]])
+    attsel <- which(names(vertex.attributes(G)) == names[i])
+    G_epi[[names[i]]] <- delete.vertices(G, V(G)[is.na(vertex.attributes(G)[[attsel]])])
+    ass[[names[i]]] <- assortativity(G_epi[[names[[i]]]], types1 = vertex.attributes(G_epi[[names[i]]])[[attsel]], directed = F)
+  }
+  
+  return(ass)
+}
+```
+
+
+
+
+
+- Calculate average abundance of ChIP-seq feature in fragment
+
+```{r}
+ab_PCHiC_all <- colMeans(agchic[which(rownames(agchic) %in% V(PCHiC_wholenet)$name),])
+ab_PCHiC_PP <- colMeans(agchic[which(rownames(agchic) %in% V(PCHiC_PP)$name),])
+ab_PCHiC_POE <- colMeans(agchic[which(rownames(agchic) %in% V(PCHiC_POE)$name),])
+ab_PCHiC_all
+```
+- Calculate assortativity
+
+```{r}
+ass_PCHiC_all <- calc_assort(PCHiC_wholenet, agchic)
+ass_PCHiC_PP <- calc_assort(PCHiC_PP, agchic)
+ass_PCHiC_POE <- calc_assort(PCHiC_POE, agchic)
+```
+
+- Create the Table of Assortativity and Abundance corresponding to cell-type
+```{r}
+namesvec <- as.data.frame(colnames(agchic))
+namesvec$names<-gsub('(\\.).*','',namesvec[,1])
+names<-unique(namesvec$names)
+annotation_feature<-read_tsv('/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/selected dataset_Blueprint_RNAseq.tsv')[, 1:3]
+annotation_feature<- annotation_feature[which(annotation_feature$ID %in% names),]
+annotation_feature$Description<-c('CD14+,CD16-','none','T=0day','monocyte_none')
+annotation_feature
+namesvec<-merge(namesvec,annotation_feature,by.x='names',by.y='ID')
+colnames(namesvec)[2]<-'ID'
+namesvec
+data_anno<-cbind(ass_PCHiC_all,ab_PCHiC_all,ass_PCHiC_PP,ab_PCHiC_PP,ass_PCHiC_POE,ab_PCHiC_POE)
+
+data_anno<-merge(data_anno,namesvec,by.x='row.names',by.y='ID')
+#data_anno<-data_anno[,-1]
+data_anno
+```
+
+
+- Colours for plots
+```{r}
+
+
+nodecats<-namesvec[,c(2,4)]
+colnames(nodecats)[1]<-'ID'
+namesvec<-colnames(agchic)
+nodecats
+cols10 <- rainbow(4)
+names(cols10) <- annotation_feature$ID
+cats <- as.vector(unique(nodecats[,2]))
+cols10 <- rainbow(11)
+names(cols10) <- cats
+cols10['Other'] <- 'grey'
+cols4plot <- rep('grey', 19)
+names(cols4plot) <- namesvec
+for (c in cats){
+  rel <- which(nodecats[,2]==c)
+  cols4plot[rownames(nodecats)[rel]] <- cols10[c]
+}
+
+rownames(data_anno)<-data_anno$Row.names
+```
+
+ - Plots
+
+
+```{r}
+rownames(nodecats) <- nodecats[,1]
+cats <- as.vector(unique(nodecats[,2]))
+cols10 <- rainbow(4)
+names(cols10) <- cats
+
+
+cols10['Other'] <- 'grey'
+cols4plot <- rep('grey', 19)
+names(cols4plot) <- namesvec
+for (c in cats){
+  rel <- which(nodecats[,2]==c)
+  cols4plot[rownames(nodecats)[rel]] <- cols10[c]
+}
+```
+
+**PCHiC general network ChAs vs abundance**
+```{r}
+labs <- c(1:ncol(agchic))
+labs2 <- rep("", ncol(agchic))
+sel <- which(ass_PCHiC_all > 0.05 | ass_PCHiC_all < 0 | ab_PCHiC_all > 0.03)
+labs2[sel] <- namesvec[sel]
+plot(ab_PCHiC_all, unlist(ass_PCHiC_all), pch = 20,  col = cols4plot, main = "PCHi-C network", xlab = "Abundance", ylab = "ChAs")
+text((ab_PCHiC_all),jitter(unlist(ass_PCHiC_all), 2), pos = 2, offset = 0.2, labels = labs, cex = 0.7)
+#text((ab_PCHiC_all),jitter(unlist(ass_PCHiC_all), 2), pos = 4, offset = 0.2, labels = labs2, cex = 0.7)
+abline(h = 0)
+legend("bottomright", legend = as.vector(unique(nodecats[,2])), bg = "white", pch = 20, col = cols10[as.vector(unique(nodecats[,2]))], cex = 0.7)
+
+```
+
+
+**PCHiC Promoter-Promoter network ChAs vs abundance**
+
+```{r}
+labs <- c(1:ncol(agchic))
+labs2 <- rep("", ncol(agchic))
+sel <- which(ass_PCHiC_PP > 0.001 | ass_PCHiC_PP < 0)
+labs2[sel] <- names[sel]
+plot(ab_PCHiC_PP, unlist(ass_PCHiC_PP), pch = 20,col = cols4plot, main = "PCHi-C P-P network", xlab = "Abundance", ylab = "ChAs")
+text((ab_PCHiC_PP),jitter(unlist(ass_PCHiC_PP), 2), pos = 2, offset = 0.2, labels = labs, cex = 0.7)
+#text((ab_PCHiC_PP),jitter(unlist(ass_PCHiC_PP), 2), pos = 4, offset = 0.2, labels = labs2, cex = 0.7)
+abline(h = 0)
+legend("bottomright", legend = as.vector(unique(nodecats[,2])), bg = "white", pch = 20, col = cols10[as.vector(unique(nodecats[,2]))], cex = 0.7)
+
+```
+
+
+**PCHiC Promoter-nonPromoter network ChAs vs abundance**
+
+```{r}
+labs <- c(1:ncol(agchic))
+labs2 <- rep("", ncol(agchic))
+sel <- which(ass_PCHiC_POE > 0.04 | ass_PCHiC_POE < 0 | ab_PCHiC_POE > 0.03)
+labs2[sel] <- namesvec[sel]
+plot(ab_PCHiC_POE, unlist(ass_PCHiC_POE), pch = 20,  col = cols4plot, main = "PCHi-C P-OE network", xlab = "Abundance", ylab = "ChAs")
+text((ab_PCHiC_POE),jitter(unlist(ass_PCHiC_POE), 2), pos = 2, offset = 0.2, labels = labs, cex = 0.7)
+#text((ab_PCHiC_POE),jitter(unlist(ass_PCHiC_POE), 2), pos = 4, offset = 0.2, labels = labs2, cex = 0.7)
+abline(h = 0)
+legend("bottomright", legend = as.vector(unique(nodecats[,2])), bg = "white", pch = 20, col = cols10[as.vector(unique(nodecats[,2]))], cex = 0.7)
+
+```
+
+
+**PCHiC PP vs POE ChAs**
+
+```{r}
+labs <- c(1:ncol(agchic))
+labs2 <- rep("", ncol(agchic))
+sel <- which(ass_PCHiC_POE > 0.04 | ass_PCHiC_POE < 0 | ass_PCHiC_PP > 0.03)
+labs2[sel] <- namesvec[sel]
+plot(unlist(ass_PCHiC_PP), unlist(ass_PCHiC_POE), pch = 20,  col = cols4plot, main = "PCHi-C P-P vs PO ChAs", xlab = "P-P", ylab = "P-OE")
+text(unlist(ass_PCHiC_PP),jitter(unlist(ass_PCHiC_POE), 2), pos = 2, offset = 0.2, labels = labs, cex = 0.7)
+#text(unlist(ass_PCHiC_PP),jitter(unlist(ass_PCHiC_POE), 2), pos = 4, offset = 0.2, labels = labs2, cex = 0.7)
+abline(a = 0, b = 1, h = 0, v = 0)
+legend("topleft", legend = as.vector(unique(nodecats[,2])), bg = "white", pch = 20, col = cols10[as.vector(unique(nodecats[,2]))], cex = 0.7)
+
+```
+
+

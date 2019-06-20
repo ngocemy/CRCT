@@ -1,0 +1,193 @@
+---
+title: "Investigation of assortativity for RNA seq data"
+output: html_notebook
+---
+```{r message=FALSE}
+library(stringr)
+library(tidyverse)
+library(igraph)
+library(GenomicRanges)
+library(data.table)
+```
+
+
+
+- Read in datasets:
+```{r message=FALSE}
+temp_file <- list.files("/Volumes/PETITPOIVRE/Ngoc_CRCT/2nd week/data_selected/csvfile")
+temp_path <- paste("/Volumes/PETITPOIVRE/Ngoc_CRCT/2nd week/data_selected/csvfile", temp_file, sep = "/")
+for (temp in temp_path) {
+  assign(x = paste(str_match(temp, "RNA_seq_([\\s\\w]+).csv$")[2], "file", sep = "_"), value = read_csv(temp), envir = .GlobalEnv)
+}
+```
+
+
+```{r message=FALSE}
+annotation <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/HindIII_annotation_ens37.txt", col_types = cols(Chr = col_character()))
+colnames(annotation)[colnames(annotation) == "gene_id"] <- "gene_name"
+
+annotation$ID <- paste(annotation$Chr, annotation$Start, annotation$End, sep = "_")
+annotation <- drop_na(annotation, ensembl_id)
+annotation <- annotation[annotation$ensembl_id != "uce", ]
+annotation <- separate(annotation, ensembl_id, sep = ",", into = c(paste("ID", seq(1, 6), sep = "")))
+```
+
+```{r}
+cell_types <- c("B cell", "T cell", "DC", "monocyte", "macrophage", "thymocyte")
+```
+
+```{r}
+dataset_fn <- function(main_data, cell_type) {
+  main_data$gene_id <- gsub("\\..*", "", main_data$gene_id)
+
+  anno1 <- merge(main_data, annotation, by.y = "ID1", by.x = "gene_id")
+  anno2 <- merge(main_data, annotation, by.y = "ID2", by.x = "gene_id")
+  anno3 <- merge(main_data, annotation, by.y = "ID3", by.x = "gene_id")
+  anno4 <- merge(main_data, annotation, by.y = "ID4", by.x = "gene_id")
+  anno5 <- merge(main_data, annotation, by.y = "ID5", by.x = "gene_id")
+  anno6 <- merge(main_data, annotation, by.y = "ID6", by.x = "gene_id")
+
+  anno <- bind_rows(anno1, anno2, anno3, anno4, anno5, anno6)
+
+  mean_value <- select(anno, -c(gene_name, gene_id, region, paste("ID", seq(1, 6), sep = ""))) %>%
+    group_by(ID, Chr, Start, End) %>%
+    summarise_all("mean")
+  write_csv(mean_value, path = paste0('/Users/caotranbichngoc/Desktop/RERUN-THESIS/',cell_type, "_mean_value_rnaseq_with_chromosome_ID.csv"))
+}
+```
+
+```{r}
+for (cell_type in cell_types) {
+  dataset_fn(get(paste(cell_type, "file", sep = "_")), cell_type)
+}
+```
+
+##Make a BED file for PCHiC network
+```{r}
+PCHiC_map <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/PCHiCJavierreCell2016_merged_samples_12Apr2015_full.txt", skip = 5, col_types = cols(oeChr = col_character(), baitChr = col_character()))
+PCHiC_wt <- PCHiC_map[any(PCHiC_map[, c(12:28)] > 5), ]
+PCHiC_wt$baits <- paste(PCHiC_wt$baitChr, PCHiC_wt$baitStart, PCHiC_wt$baitEnd, sep = "_")
+PCHiC_wt$OEs <- paste(PCHiC_wt$oeChr, PCHiC_wt$oeStart, PCHiC_wt$oeEnd, sep = "_")
+PCHiC_baits <- unique(PCHiC_wt$baits)
+PCHiC_OE_all <- unique(PCHiC_wt$OEs)
+
+PCHiC_nonPromOE <- PCHiC_OE_all[-which(PCHiC_OE_all %in% PCHiC_baits)]
+PCHiC_wholenet <- graph_from_data_frame(PCHiC_wt[, c(29:30)], directed = FALSE)
+PCHiC_PP <- delete.vertices(PCHiC_wholenet, V(PCHiC_wholenet)[which(V(PCHiC_wholenet)$name %in% PCHiC_nonPromOE)])
+
+colnames(PCHiC_wt)[c(1:3, 6:8)] <- rep(c("chr", "start", "end"), 2)
+PCHiC_bed <- unique(rbind(PCHiC_wt[, c(1:3)], PCHiC_wt[, c(6:8)]))
+PCHiC_GRange <- with(PCHiC_bed, GRanges(chr, IRanges(start, end)))
+PCHiC_GRange$ID <- paste(PCHiC_bed$chr, PCHiC_bed$start, PCHiC_bed$end, sep = "_")
+```
+
+##Function to calculate assortativity
+
+```{r}
+calc_assort <- function(G, data) {
+  names <- colnames(data)
+  ass <- list()
+  G_epi <- list()
+  for (i in c(1:ncol(data))) {
+    G <- set.vertex.attribute(G, names[i], value = data[V(G)$name, names[i]])
+    attsel <- which(names(vertex.attributes(G)) == names[i])
+    G_epi[[names[i]]] <- delete.vertices(G, V(G)[is.na(vertex.attributes(G)[[attsel]])])
+    ass[[names[i]]] <- assortativity(G_epi[[names[[i]]]], types1 = vertex.attributes(G_epi[[names[i]]])[[attsel]], directed = F)
+  }
+
+  return(ass)
+}
+```
+
+
+```{r}
+function_RNA_seq_ass <- function(main_data, cell_type) {
+  # Read-in
+  mean_value <- read_csv(paste0('/Users/caotranbichngoc/Desktop/RERUN-THESIS/',cell_type, "_mean_value_rnaseq_with_chromosome_ID.csv"), col_types = cols(Chr = col_character()))
+  # Make the GRange object for RNA-seq chromosome position network
+  bedepi <- with(mean_value, GRanges(Chr, ranges = IRanges(Start, End), strand = Rle(strand(rep("*", nrow(mean_value))))))
+  mcols(bedepi) <- mean_value[, -c(1:5)]
+  names(bedepi) <- mean_value$ID
+
+  # Make the overlap between 2 BED files
+  overlaps <- findOverlaps(PCHiC_GRange, bedepi)
+  print(overlaps)
+  match_hit <- data.frame(PCHiC_GRange$ID[queryHits(overlaps)], as.data.frame(mcols(bedepi)[subjectHits(overlaps), ]), stringsAsFactors = T)
+  colnames(match_hit)[1] <- "fragment"
+
+  data.dt <- data.table(match_hit)
+  setkey(data.dt, fragment) # sorts ascending by fragment
+  agchic <- data.frame(data.dt[, lapply(.SD, mean), by = fragment]) # mean of ChIP-seq features by fragment
+  agchic <- data.frame(agchic[, -1], row.names = agchic[, 1])
+  print(agchic)
+
+
+  ab_PCHiC_PP <- colMeans(agchic[which(rownames(agchic) %in% V(PCHiC_PP)$name), ])
+  ass_PCHiC_PP <- calc_assort(PCHiC_PP, agchic)
+  data_anno <- tibble(names = names(ab_PCHiC_PP), ab_pp = ab_PCHiC_PP, ass_pp = unlist(ass_PCHiC_PP))
+  write_csv(data_anno, path = paste0('/Users/caotranbichngoc/Desktop/RERUN-THESIS/',cell_type, "_ab_ass.csv"))
+}
+```
+
+- Run the Big function to get assortativity and plot agaisnt abundance all at once!
+
+```{r}
+for (cell_type in cell_types) {
+  function_RNA_seq_ass(get(paste(cell_type, "file", sep = "_")), cell_type)
+}
+```
+
+## Graph
+```{r}
+graph_fn <- function(cell_type) {
+  data_anno <- read_csv(paste0('/Users/caotranbichngoc/Desktop/RERUN-THESIS/',cell_type, "_ab_ass.csv"))
+  data_anno["ID"] <- NA
+  for (i in 1:nrow(data_anno)) {
+    data_anno$ID[i] <- gsub("(\\.).*", "", data_anno$names[i])
+  }
+
+  names <- unique(data_anno$ID)
+  annotation_feature <- read_tsv("selected dataset_Blueprint_RNAseq.tsv")[, c(1:3)]
+  annotation_feature <- annotation_feature[which(annotation_feature$ID %in% names), -2 ]
+  for (i in 1:length(annotation_feature$Description)) {
+    annotation_feature$Description[i] <- str_match(annotation_feature$Description[i], "RNA-Seq for ([,-=\\w\\s]+), on genome GRCh38$")[2]
+  }
+  data_anno <- merge(data_anno, annotation_feature, by.x = "ID", by.y = "ID")
+
+  nodecats <- data_anno[, c(2, 5)]
+  colnames(nodecats)[1] <- "ID"
+  rownames(nodecats) <- nodecats[, 1]
+
+  cols10 <- rainbow(length(annotation_feature$ID))
+  names(cols10) <- annotation_feature$Description
+  cols4plot <- rep("grey", length(nodecats$ID))
+  names(cols4plot) <- nodecats[, 1]
+  cats <- nodecats[, 2]
+  for (c in cats) {
+    cols4plot[nodecats[which(nodecats[, 2] == c), 1]] <- cols10[c]
+  }
+
+  pdf(paste(cell_type, "PCHiC Promoter-Promoter assortativity vs abundance.pdf"))
+  labs <- c(1:nrow(nodecats))
+  plot(data_anno$ab_pp, data_anno$ass_pp, xlim = c(0, 200), ylim = c(-0.02, 0.02), pch = 20, col = cols4plot, main = paste(cell_type, "PCHi-C P-P network"), xlab = "Abundance", ylab = "ChAs")
+  legend("bottomright", legend = as.vector(unique(nodecats[, 2])), bg = "white", pch = 20, col = cols10[unique(nodecats[, 2])], cex = 0.3)
+  dev.off()
+}
+```
+
+```{r}
+pdf(paste(cell_type, "PCHiC Promoter-Promoter assortativity vs abundance.pdf"))
+labs <- c(1:nrow(nodecats))
+plot(data_anno$ab_pp, data_anno$ass_pp, xlim = c(0, 200), ylim = c(-0.02, 0.02), pch = 20, col = cols4plot, main = paste(cell_type, "PCHi-C P-P network"), xlab = "Abundance", ylab = "ChAs")
+legend("bottomright", legend = as.vector(unique(nodecats[, 2])), bg = "white", pch = 20, col = cols10[unique(nodecats[, 2])], cex = 0.3)
+dev.off()
+```
+
+
+```{r}
+for (cell_type in cell_types) {
+  graph_fn(cell_type)
+}
+```
+
+
