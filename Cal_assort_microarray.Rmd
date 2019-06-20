@@ -1,0 +1,244 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r message=FALSE}
+library(stringr)
+
+library(igraph)
+library(GenomicRanges)
+library(data.table)
+library(tidyverse)
+```
+
+
+
+
+- Read in prepared data
+```{r}
+setwd("/Users/caotranbichngoc/Desktop/RERUN-THESIS/NLC-TAM-microarray")
+NLC_data<-read_csv('~/Desktop/Ngoc_CRCT/3rd week/Microarray_CLL_NLC/data_for_cal_assort/NLC annotation data.csv')
+all_type<-read_tsv('/Users/caotranbichngoc/Desktop/RERUN-THESIS/NLC-TAM-microarray/hindiii_microarray_all_cells.tsv',col_types = cols(Chr = col_character()))
+NLC_data
+all_type
+```
+
+- Function to calculate and plot abundance vs assortativity
+```{r}
+calc_assort <- function(G, data) {
+  names <- colnames(data)
+  ass <- list()
+  G_epi <- list()
+  for (i in c(1:ncol(data))) {
+    G <- set.vertex.attribute(G, names[i], value = data[V(G)$name, names[i]])
+    attsel <- which(names(vertex.attributes(G)) == names[i])
+    G_epi[[names[i]]] <- delete.vertices(G, V(G)[is.na(vertex.attributes(G)[[attsel]])])
+    ass[[names[i]]] <- assortativity(G_epi[[names[[i]]]], types1 = vertex.attributes(G_epi[[names[i]]])[[attsel]], directed = F)
+  }
+
+  return(ass)
+}
+```
+
+
+
+```{r message=FALSE,  echo=F, results='hide'}
+PCHiC_map <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/PCHiCJavierreCell2016_merged_samples_12Apr2015_full.txt", skip = 5, col_types = cols(oeChr = col_character(), baitChr = col_character()))
+```
+
+
+
+- Make BED file for PCHiC map 
+```{r}
+
+PCHiC_wt <- PCHiC_map[, c(12:28)]
+PCHiC_wt <- PCHiC_map[any(PCHiC_map[, c(12:28)] > 5), ]
+PCHiC_wt$baits <- paste(PCHiC_wt$baitChr, PCHiC_wt$baitStart, PCHiC_wt$baitEnd, sep = "_")
+PCHiC_wt$OEs <- paste(PCHiC_wt$oeChr, PCHiC_wt$oeStart, PCHiC_wt$oeEnd, sep = "_")
+PCHiC_baits <- unique(PCHiC_wt$baits)
+PCHiC_OE_all <- unique(PCHiC_wt$OEs)
+
+PCHiC_nonPromOE <- PCHiC_OE_all[-which(PCHiC_OE_all %in% PCHiC_baits)]
+PCHiC_wholenet <- graph_from_data_frame(PCHiC_wt[, c(29:30)], directed = FALSE)
+PCHiC_wholenet <- simplify(PCHiC_wholenet)
+PCHiC_PP <- delete.vertices(PCHiC_wholenet, V(PCHiC_wholenet)[which(V(PCHiC_wholenet)$name %in% PCHiC_nonPromOE)])
+
+colnames(PCHiC_wt)[c(1:3, 6:8)] <- rep(c("chr", "start", "end"), 2)
+PCHiC_bed <- unique(rbind(PCHiC_wt[, c(1:3)], PCHiC_wt[, c(6:8)]))
+PCHiC_GRange <- with(PCHiC_bed, GRanges(chr, IRanges(start, end)))
+PCHiC_GRange$ID <- paste(PCHiC_bed$chr, PCHiC_bed$start, PCHiC_bed$end, sep = "_")
+names(PCHiC_GRange) <- PCHiC_GRange$ID
+PCHiC_GRange
+```
+
+
+
+
+
+- Make a BED file for all cell types file:
+```{r}
+bedepi <- with(all_type, GRanges(Chr, ranges = IRanges(Start, End)))
+mcols(bedepi) <- all_type[, -c(1:4)]
+names(bedepi) <- all_type$ID
+```
+
+
+```{r}
+overlaps <- findOverlaps(PCHiC_GRange, bedepi)
+overlaps
+match_hit <- data.frame(PCHiC_GRange$ID[queryHits(overlaps)], as.data.frame(mcols(bedepi)[subjectHits(overlaps), ]), stringsAsFactors = T)
+colnames(match_hit)[1] <- "fragment"
+
+data.dt <- data.table(match_hit)
+setkey(data.dt, fragment) # sorts ascending by fragment
+data.dt
+```
+```{r}
+agchic <- data.frame(data.dt[, lapply(.SD, mean), by = fragment]) # mean of ChIP-seq features by fragment
+agchic <- data.frame(agchic[, -1], row.names = agchic[, 1])
+agchic
+```
+
+
+
+- Calculate abundance and assortativity
+```{r}
+ab_PCHiC_PP <- colMeans(agchic[which(rownames(agchic) %in% V(PCHiC_PP)$name), ])
+ass_PCHiC_PP <- calc_assort(PCHiC_PP, agchic)
+
+```
+
+
+- Grouping cell types for group colour
+```{r}
+annotation_feature<-data.frame(matrix(nrow = 32))
+colnames(annotation_feature)[1]<- 'names'
+annotation_feature['cells']<-colnames(agchic)
+for (i in 7:nrow(annotation_feature)){
+  annotation_feature$names[i]<-strsplit(annotation_feature$cells[i], "(?=[A-Za-z])(?<=[0-9])|(?=[0-9])(?<=[A-Za-z])", perl=TRUE)[[1]][1]
+}
+annotation_feature$names[1:3]<-'M2'
+annotation_feature$names[4:6]<-'M1'
+annotation_feature<-annotation_feature[,2:1]
+```
+
+```{r}
+data_anno<-cbind(as.list(ab_PCHiC_PP),ass_PCHiC_PP)
+
+data_anno<-merge(data_anno,annotation_feature,by.x='row.names',by.y='cells')
+colnames(data_anno)[2]<-'ab_PCHiC_PP'
+data_anno
+
+nodecats <- annotation_feature
+namesvec <- colnames(agchic)
+cols10 <- rainbow(5)
+cats <- as.vector(unique(nodecats[, 2]))
+names(cols10) <- cats
+cols4plot <- rep("grey", nrow(annotation_feature))
+names(cols4plot) <- annotation_feature$cells
+for (c in cats) {
+  rel <- nodecats[which(nodecats[, 2] == c),1]
+  cols4plot[rel] <- cols10[c]
+}
+
+
+
+```
+```{r}
+pdf(paste('Promoter-Promoter assortativity vs abundance for immune cell types.pdf'))
+labs <- c(1:ncol(agchic))
+sel <- which(ass_PCHiC_PP > 0.001 | ass_PCHiC_PP < 0)
+plot(ab_PCHiC_PP, unlist(ass_PCHiC_PP), pch = 20, col = cols4plot, xlim=c(3,8),main = "PCHi-C P-P network", xlab = "Abundance", ylab = "ChAs")
+
+legend("bottomright", legend = as.vector(unique(nodecats[, 2])), bg = "white", pch = 20, col = cols10[as.vector(unique(nodecats[, 2]))], cex = 0.7)
+dev.off()
+```
+Plot
+```{r}
+plot(ab_PCHiC_PP, unlist(ass_PCHiC_PP), pch = 20, col = cols4plot,xlim=c(3,8), main = "PCHi-C P-P network", xlab = "Abundance", ylab = "ChAs")
+legend("bottomright", legend = as.vector(unique(nodecats[, 2])), bg = "white", pch = 20, col = cols10[as.vector(unique(nodecats[, 2]))], cex = 0.7)
+```
+
+- Aggregating for plot each cell type
+```{r}
+data_anno_agg <- data_anno[,-1]
+data_anno_agg$ab_PCHiC_PP <- unlist(data_anno_agg$ab_PCHiC_PP)
+data_anno_agg$ass_PCHiC_PP <- unlist(data_anno_agg$ass_PCHiC_PP)
+
+data_anno_agg
+data_anno_agg <- aggregate(data_anno_agg[,-3],by=list(data_anno_agg$names),mean)
+colnames(data_anno_agg)[1] <- 'CELL_TYPE'
+```
+
+```{r}
+library(ggplot2)
+png('Abundance vs ChAs PP Microarray.png')
+ggplot(data_anno_agg,aes(x=ab_PCHiC_PP,y=ass_PCHiC_PP,col=CELL_TYPE,label=CELL_TYPE)) + geom_point()  + labs(x='Abundance',y='ChAs for Promoter-Promoter') + ggtitle('Abundance vs ChAs PP Microarray')+  geom_text(size=2.6,hjust=-0.05,vjust=1)
+dev.off()
+```
+
+*for only NLC*
+- Generate a BED format for NLC data
+```{r}
+
+bedepi <- with(NLC_data, GRanges(Chr, ranges = IRanges(Start, End)))
+mcols(bedepi) <- NLC_data[, -c(7:10)]
+names(bedepi) <- NLC_data$ID
+
+```
+
+
+
+```{r}
+overlaps <- findOverlaps(PCHiC_GRange, bedepi)
+overlaps
+match_hit <- data.frame(PCHiC_GRange$ID[queryHits(overlaps)], as.data.frame(mcols(bedepi)[subjectHits(overlaps), ]), stringsAsFactors = T)
+colnames(match_hit)[1] <- "fragment"
+
+data.dt <- data.table(match_hit)
+setkey(data.dt, fragment) # sorts ascending by fragment
+data.dt
+```
+```{r}
+agchic <- data.frame(data.dt[, lapply(.SD, mean), by = fragment]) # mean of ChIP-seq features by fragment
+agchic <- data.frame(agchic[, -1], row.names = agchic[, 1])
+agchic
+```
+```{r}
+ab_PCHiC_PP <- colMeans(agchic[which(rownames(agchic) %in% V(PCHiC_PP)$name), ])
+ass_PCHiC_PP <- calc_assort(PCHiC_PP, agchic)
+```
+- Grouping cell types for group colour
+
+```{r}
+data_anno_2<-cbind(as.list(ab_PCHiC_PP),ass_PCHiC_PP)
+
+colnames(data_anno_2)[1]<-'ab_PCHiC_PP'
+data_anno_2
+
+cols4plot <- rainbow(6)
+names(cols4plot)<-row.names(data_anno_2)
+cols4plot
+
+```
+
+
+```{r}
+pdf(paste('Promoter-Promoter assortativity vs abundance for NLC.pdf'))
+labs <- c(1:ncol(agchic))
+plot(ab_PCHiC_PP, unlist(ass_PCHiC_PP),xlim=c(0,10),ylim=c(0.19,0.24), pch = 20, col = cols4plot, main = "PCHi-C P-P network", xlab = "Abundance", ylab = "ChAs")
+
+legend("bottomright", legend = as.vector(rownames(data_anno_2)), bg = "white", pch = 20, col = cols4plot[names(cols4plot)], cex = 0.5)
+dev.off()
+```
+
+```{r}
+plot(ab_PCHiC_PP, unlist(ass_PCHiC_PP),xlim=c(0,10),ylim=c(0.19,0.24), pch = 20, col = cols4plot, main = "PCHi-C P-P network", xlab = "Abundance", ylab = "ChAs")
+
+legend("bottomright", legend = as.vector(rownames(data_anno_2)), bg = "white", pch = 20, col = cols4plot[names(cols4plot)], cex = 0.5)
+
+```
+
+
