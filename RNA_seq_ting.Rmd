@@ -1,0 +1,204 @@
+---
+title: "Calculate ChAs for RNA-seq data from multiple publications - Ting's to evaluate BLUEPRINT data"
+output: html_notebook
+---
+
+```{r message=FALSE}
+library(stringr)
+library(tidyverse)
+library(igraph)
+library(GenomicRanges)
+library(data.table)
+```
+
+```{r}
+setwd("/home/ngoc/Desktop/Ngoc_CRCT/6th week")
+rna_data <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/6th week/combined_dataset_tpm.txt")
+biomart <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/3rd week/Microarray_CLL_NLC/mart_export.txt")
+rna_data <- merge(biomart, rna_data, by.x = "Gene name", by.y = "GENE")
+rna_data <- rna_data[, -c(1, 3, 4)]
+rna_data <- aggregate(rna_data[1], rna_data[-1], unique)
+colnames(rna_data)[72] <- "ID"
+
+rna_data
+```
+
+- Take the mean of all rows that have the same Ensemble ID
+
+```{r}
+# Transform list into character
+for (i in 1:nrow(rna_data)) {
+  rna_data$ID[i] <- paste(rna_data$ID[i][[1]], collapse = ",")
+}
+## Unlist the column so that can take the group_by function
+rna_data$ID <- unlist(rna_data$ID)
+rna_data_mean <- rna_data %>%
+  group_by(ID) %>%
+  summarise_all("mean")
+rna_data_mean
+```
+
+
+```{r message=FALSE}
+annotation <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/HindIII_annotation_ens37.txt", col_types = cols(Chr = col_character()))
+colnames(annotation)[colnames(annotation) == "gene_id"] <- "gene_name"
+
+annotation$ID <- paste(annotation$Chr, annotation$Start, annotation$End, sep = "_")
+annotation <- drop_na(annotation, ensembl_id)
+annotation <- annotation[annotation$ensembl_id != "uce", ]
+```
+
+- Divide the dataset to 2 parts according to ENSEMBL ID, outer one with ',' (to match by str_match) and inner one without (to match directly)
+
+```{r}
+out_er <- dplyr::filter(rna_data_mean, grepl(",", ID))
+inn_er <- dplyr::filter(rna_data_mean, !grepl(",", ID))
+out_er
+```
+- Merge outer with annotation file, only 755 rows so use this stupid code which is very slow
+```{r message=FALSE}
+out_er["anno"] <- "NA"
+for (i in 1:nrow(out_er)) {
+  for (j in 1:nrow(annotation))
+
+  {
+    match <- str_match(out_er$ID[i][[1]][1], annotation$ensembl_id[j])
+    if (!is.na(match)) {
+      out_er$anno[i] <- (annotation[j, 7])
+    }
+  }
+}
+out_er$anno <- unlist(out_er$anno)
+out_er <- out_er[-which(out_er$anno == "NA"), ]
+out_er <- out_er[, -1]
+colnames(out_er)[72] <- "ID"
+out_er <- separate(out_er, 72, sep = "_", into = c("Chr", "Start", "End"), remove = FALSE)
+out_er
+```
+- Merge inn_er with annotation file, have to use separate and merge, to be faster
+```{r}
+annotation <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/HindIII_annotation_ens37.txt", col_types = cols(Chr = col_character()))
+colnames(annotation)[colnames(annotation) == "gene_id"] <- "gene_name"
+
+annotation$ID <- paste(annotation$Chr, annotation$Start, annotation$End, sep = "_")
+annotation <- drop_na(annotation, ensembl_id)
+annotation <- annotation[annotation$ensembl_id != "uce", ]
+annotation <- separate(annotation, 4, into = paste("ID", seq(1, 6), sep = ""))
+anno1 <- merge(inn_er, annotation, by.y = "ID1", by.x = "ID")
+anno2 <- merge(inn_er, annotation, by.y = "ID2", by.x = "ID")
+anno3 <- merge(inn_er, annotation, by.y = "ID3", by.x = "ID")
+anno4 <- merge(inn_er, annotation, by.y = "ID4", by.x = "ID")
+anno5 <- merge(inn_er, annotation, by.y = "ID5", by.x = "ID")
+anno6 <- merge(inn_er, annotation, by.y = "ID6", by.x = "ID")
+
+anno <- bind_rows(anno1, anno2, anno3, anno4, anno5, anno6)
+anno <- anno[, c(2:75)]
+anno$ID <- paste(anno$Chr, anno$Start, anno$End, sep = "_")
+```
+- Merge into a complete dataset to do the assortativity
+```{r}
+rna_anno_data <- rbind(anno, out_er)
+rna_anno_data <- rna_anno_data[, -c(72:74)]
+rna_anno_data <- aggregate(x = rna_anno_data[, c(1:71)], by = list(ID = rna_anno_data$ID), FUN = "mean", na.rm = T)
+write_csv(rna_anno_data, "RNA-seq annotation data.csv")
+```
+
+
+##Make a BED file for PCHiC network
+```{r}
+PCHiC_map <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/RNA-Seq/PCHiCJavierreCell2016_merged_samples_12Apr2015_full.txt", skip = 5, col_types = cols(oeChr = col_character(), baitChr = col_character()))
+PCHiC_wt <- PCHiC_map[, c(12:28)]
+PCHiC_wt <- PCHiC_map[any(PCHiC_map[, c(12:28)] > 5), ]
+PCHiC_wt$baits <- paste(PCHiC_wt$baitChr, PCHiC_wt$baitStart, PCHiC_wt$baitEnd, sep = "_")
+PCHiC_wt$OEs <- paste(PCHiC_wt$oeChr, PCHiC_wt$oeStart, PCHiC_wt$oeEnd, sep = "_")
+PCHiC_baits <- unique(PCHiC_wt$baits)
+PCHiC_OE_all <- unique(PCHiC_wt$OEs)
+
+PCHiC_nonPromOE <- PCHiC_OE_all[-which(PCHiC_OE_all %in% PCHiC_baits)]
+PCHiC_wholenet <- graph_from_data_frame(PCHiC_wt[, c(29:30)], directed = FALSE)
+PCHiC_wholenet <- simplify(PCHiC_wholenet)
+PCHiC_PP <- delete.vertices(PCHiC_wholenet, V(PCHiC_wholenet)[which(V(PCHiC_wholenet)$name %in% PCHiC_nonPromOE)])
+
+colnames(PCHiC_wt)[c(1:3, 6:8)] <- rep(c("chr", "start", "end"), 2)
+PCHiC_bed <- unique(rbind(PCHiC_wt[, c(1:3)], PCHiC_wt[, c(6:8)]))
+PCHiC_GRange <- with(PCHiC_bed, GRanges(chr, IRanges(start, end)))
+PCHiC_GRange$ID <- paste(PCHiC_bed$chr, PCHiC_bed$start, PCHiC_bed$end, sep = "_")
+```
+
+##Function to calculate assortativity
+
+```{r}
+calc_assort <- function(G, data) {
+  names <- colnames(data)
+  ass <- list()
+  G_epi <- list()
+  for (i in c(1:ncol(data))) {
+    G <- set.vertex.attribute(G, names[i], value = data[V(G)$name, names[i]])
+    attsel <- which(names(vertex.attributes(G)) == names[i])
+    G_epi[[names[i]]] <- delete.vertices(G, V(G)[is.na(vertex.attributes(G)[[attsel]])])
+    ass[[names[i]]] <- assortativity(G_epi[[names[[i]]]], types1 = vertex.attributes(G_epi[[names[i]]])[[attsel]], directed = F)
+  }
+
+  return(ass)
+}
+```
+
+```{r message=FALSE}
+mean_value <- separate(rna_anno_data, 1, sep = "_", into = c("Chr", "Start", "End"), remove = FALSE)
+mean_value$Start<-as.numeric(mean_value$Start)
+mean_value$End<-as.numeric(mean_value$End)
+# Make the GRange object for RNA-seq chromosome position network
+bedepi <- with(mean_value, GRanges(Chr, ranges = IRanges(Start, End), strand = Rle(strand(rep("*", nrow(mean_value))))))
+mcols(bedepi) <- mean_value[, -c(1:4)]
+names(bedepi) <- mean_value$ID
+
+# Make the overlap between 2 BED files
+overlaps <- findOverlaps(PCHiC_GRange, bedepi)
+match_hit <- data.frame(PCHiC_GRange$ID[queryHits(overlaps)], as.data.frame(mcols(bedepi)[subjectHits(overlaps), ]), stringsAsFactors = T)
+colnames(match_hit)[1] <- "fragment"
+
+data.dt <- data.table(match_hit)
+setkey(data.dt, fragment) # sorts ascending by fragment
+agchic <- data.frame(data.dt[, lapply(.SD, mean), by = fragment]) # mean of ChIP-seq features by fragment
+agchic <- data.frame(agchic[, -1], row.names = agchic[, 1])
+
+
+
+ab_PCHiC_PP <- colMeans(agchic[which(rownames(agchic) %in% V(PCHiC_PP)$name), ])
+ass_PCHiC_PP <- calc_assort(PCHiC_PP, agchic)
+data_anno <- tibble(names = names(ab_PCHiC_PP), ab_pp = ab_PCHiC_PP, ass_pp = unlist(ass_PCHiC_PP))
+write_tsv(data_anno, path = "ab_ass.csv")
+```
+
+
+```{r message=FALSE}
+data_anno
+```
+## Graph
+```{r}
+
+data_anno["ID"] <- NA
+for (i in 1:nrow(data_anno)) {
+  data_anno$ID[i] <- gsub("(\\_).*", "", data_anno$names[i])
+}
+data_anno[which(data_anno$ID=='Bcells'),4]<-'Bcell'
+names <- unique(data_anno$ID)
+
+nodecats <- data_anno[, c(1,4)]
+name_col<-data_frame(names,rainbow(length(names)))
+nodecats<-merge(nodecats,name_col,by.x='ID',by.y='names')
+nodecats[which(nodecats$ID == 'Neu'),3]<-'#B22222'
+cols4plot<-nodecats$`rainbow(length(names))`
+names(cols4plot)<-nodecats$names
+```
+
+```{r message=FALSE}
+plot(data_anno$ab_pp, data_anno$ass_pp, xlim = c(0, 200), pch = 20, col = cols4plot, main = "PCHi-C P-P network", xlab = "Abundance", ylab = "ChAs")
+legend("bottomright", legend = as.vector(unique(nodecats[, 1])), bg = "white", pch = 20, col = unique(cols4plot), cex = 0.75)
+```
+- Aggregate cell types
+```{r}
+
+```
+
+
