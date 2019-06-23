@@ -1,0 +1,230 @@
+---
+title: "Annotation Chromatin State "
+output: html_notebook
+---
+```{r}
+library(ggpubr)
+```
+
+```{r}
+setwd("/home/ngoc/Desktop/Ngoc_CRCT/8th week")
+annotation <- read_tsv('20160816.data.index.txt')
+healthy <- read_tsv('healthy_chromhmm_anno.tsv')
+disease <- read_tsv('disease_chromhmm_anno.tsv')
+```
+
+```{r message=FALSE}
+data_chas_poe <- read_csv("Carrillo2017_chromatinstatesBP/chrom_state_poe.csv")
+data_chas_pp <- read_csv("Carrillo2017_chromatinstatesBP/chrom_state_pp.csv")
+data_chas_pp <- data_chas_pp %>% gather(paste0('E',c(1:11)),key = 'chrom_state',value = 'pp')
+data_chas_poe <- data_chas_poe %>% gather(paste0('E',c(1:11)),key = 'chrom_state',value = 'poe')
+data_chas <- merge(data_chas_poe,data_chas_pp)
+#name contain list of file_names
+```
+
+```{r}
+sample_id <- str_extract(name, '\\w\\d{2}\\w{5}')
+sample_id
+```
+```{r}
+anno <- as.data.frame(cbind(sample_id,name))
+anno
+```
+
+```{r}
+healthy_anno <- merge(anno,healthy,by.x='sample_id',by.y='SAMPLE_NAME')
+healthy_anno
+```
+```{r}
+disease_anno <- merge(anno,disease,by.x='sample_id',by.y='SAMPLE_NAME')
+disease_anno
+
+##So, the data Vera gave me is of healthy samples
+```
+```{r}
+healthy_anno <- healthy_anno[,-c(1,3)]
+healthy_anno
+```
+
+
+```{r}
+data_chas_anno <- merge(data_chas, healthy_anno, by.x='filenames',by.y='name')
+data_chas_anno
+```
+
+
+
+
+
+```{r}
+extract_cell_type <- function(type_name,dataset){
+  chas_anno <- data_chas_anno[grep(type_name,dataset$CELL_TYPE),]
+return(chas_anno)
+}
+```
+
+```{r}
+neutrophil <- extract_cell_type('neutrophil', data_chas_anno)
+neutrophil
+```
+
+```{r}
+
+ggplot(neutrophil[neutrophil$CELL_TYPE == 'mature neutrophil',], aes(x = pp, y = poe,col=chrom_state)) + 
+        geom_point() + geom_hline(yintercept = 0)
+
+```
+
+
+
+```{r}
+ggplot(neutrophil[neutrophil$CELL_TYPE == 'neutrophilic myelocyte',], aes(x = pp, y = poe,col=chrom_state)) + 
+        geom_point() + geom_hline(yintercept = 0)
+
+```
+
+
+```{r}
+ggplot(neutrophil[neutrophil$CELL_TYPE == 'band form neutrophil',], aes(x = pp, y = poe,col=chrom_state)) + 
+        geom_point() + geom_hline(yintercept = 0)
+```
+
+
+
+```{r}
+ggplot(neutrophil[neutrophil$CELL_TYPE == 'segmented neutrophil of bone marrow',], aes(x = pp, y = poe,col=chrom_state)) + 
+        geom_point() + geom_hline(yintercept = 0)
+```
+```{r}
+
+```
+
+```{r}
+ggplot(neutrophil[neutrophil$chrom_state == c('E3'),], aes(x = pp, y = poe,col=CELL_TYPE)) + 
+        geom_point() + geom_hline(yintercept = 0) + ggtitle('Neutrophil differentiation via ChAs - PP vs POE')
+ggsave('neutrophils.pdf',width = 7, height = 4)
+```
+
+
+
+
+- Macrophage
+
+```{r}
+macrophage <- extract_cell_type('macrophage', data_chas_anno)
+macrophage
+
+ggplot(macrophage[macrophage$chrom_state == c('E3','E6','E7','E5'),], aes(x = pp, y = poe,col=chrom_state,shape=CELL_TYPE)) + 
+        geom_point() + geom_hline(yintercept = 0) + ggtitle('Macrophage differentiation via ChAs - PP vs POE in polycomb states') + scale_colour_discrete(labels=c('E3:Heterochromatin High Signal H3K9me3','E5:Repressed Polycomb High signal H3K27me3','E6:Repressed Polycomb Low signal H3K27me3','E7:Repressed Polycomb TSS High Signal H3K27me3 & H3K4me3 & H3K4me1'))  + theme(legend.text = element_text(size = 4)) + labs(x='ChAs for Promoter-Promoter',y='ChAs for Promoter-Other Ends')
+
+ggsave('Macrophage differentiation via ChAs - PP vs POE in polycomb states.pdf',width = 7, height = 4.5)
+```
+
+
+```{r}
+ Heterochromatin High Signal H3K9me3
+State5.- Repressed Polycomb High signal H3K27me3
+	State6.- Repressed Polycomb Low signal H3K27me3 
+	State7.- Repressed Polycomb TSS High Signal H3K27me3 & H3K4me3 & H3K4me1
+```
+
+
+
+
+```{r}
+monocyte <- extract_cell_type('monocyte', data_chas_anno)
+monocyte
+ggplot(monocyte[monocyte$chrom_state == c('E3','E6','E7','E5'),], aes(x = pp, y = poe,col=chrom_state) + 
+        geom_point() + geom_hline(yintercept = 0) + ggtitle('ChAs - PP vs POE in polycomb states of Monocytes') + scale_colour_discrete(labels=c('E3:Heterochromatin High Signal H3K9me3','E5:Repressed Polycomb High signal H3K27me3','E6:Repressed Polycomb Low signal H3K27me3','E7:Repressed Polycomb TSS High Signal H3K27me3 & H3K4me3 & H3K4me1'))  + theme(legend.text = element_text(size = 4)) + labs(x='ChAs for Promoter-Promoter',y='ChAs for Promoter-Other Ends')
+
+ggsave('Monocyte differentiation via ChAs - PP vs POE in polycomb states.pdf',width = 7, height = 4.5)
+```
+
+
+
+```{r}
+mono_macro <- rbind(monocyte,macrophage)
+
+ggplot(mono_macro[mono_macro$chrom_state == c('E3','E6','E7','E5'),], aes(x = pp, y = poe,col=CELL_TYPE,shape=chrom_state)) + 
+        geom_point() + geom_hline(yintercept = 0) + ggtitle('Monocyte vs Macrophage  via ChAs - PP vs POE in polycomb states') + scale_shape_discrete(name='chromatin states',labels=c('E3:Heterochromatin High Signal H3K9me3','E5:Repressed Polycomb High signal H3K27me3','E6:Repressed Polycomb Low signal H3K27me3','E7:Repressed Polycomb TSS High Signal H3K27me3 & H3K4me3 & H3K4me1'))  + theme(legend.text = element_text(size = 4),plot.title = element_text(size=9,colour = 'blue',face = 'bold')) + labs(x='ChAs for Promoter-Promoter',y='ChAs for Promoter-Other Ends') + scale_color_discrete(name='Cell types')
+
+ggsave('Monocyte vs Macrophage  via ChAs - PP vs POE in polycomb states.pdf',width = 7, height = 4.5)
+```
+
+
+- 27.5.19: Aggregate data macrophage
+
+```{r}
+macrophage
+
+macrophage_agg <- aggregate(macrophage[,c(3,4)],list(macrophage$chrom_state),mean)
+macrophage_agg
+mono_agg <- aggregate(monocyte[,c(3,4)],list(monocyte$chrom_state),mean)
+colnames(mono_agg)[1] <- 'chrom_state'
+colnames(macrophage_agg)[1] <- 'chrom_state'
+
+
+
+macrophage_fig <- ggplot(macrophage_agg[which(macrophage_agg$chrom_state %in% c('E3','E6','E7','E5')),], aes(x = pp, y = poe,col=chrom_state),panel.background = element_rect(size = 0.5, linetype = 'solid',
+                                colour = "white")) + 
+        geom_point() + geom_hline(yintercept = 0)   + labs(x='ChAs for Promoter-Promoter',y='ChAs for Promoter-Other Ends') + ylim(0,0.18) + xlim(0.15,0.23)  #scale_colour_discrete(labels=c('E3:Heterochromatin High Signal H3K9me3','E5:Repressed Polycomb High signal H3K27me3','E6:Repressed Polycomb Low signal H3K27me3','E7:Repressed Polycomb TSS High Signal H3K27me3 & H3K4me3 & H3K4me1'))  + theme(legend.text = element_text(size = 2))  
+
+
+mono_fig <- ggplot(mono_agg[mono_agg$chrom_state %in% c('E3','E6','E7','E5'),], aes(x = pp, y = poe,col=chrom_state)) + geom_point() + geom_hline(yintercept = 0)  +    labs(x='ChAs for Promoter-Promoter',y='ChAs for Promoter-Other Ends') + ylim(0,0.18) +xlim(0.15,0.23) 
+#+ theme(legend.text = element_text(size = 2))  
+  
+
+
+p<- ggarrange(macrophage_fig ,
+          mono_fig , 
+          labels = c("Macrophages", "Monocytes"),
+          ncol = 2, nrow = 1, common.legend = TRUE,legend = 'bottom',font.label = c(size=8) )  
+p
+ggsave('Monocyte vs Macrophage  via ChAs - PP vs POE in 4 states.pdf',width = 7, height = 4.5)
+```
+
+
+- All cell types in one plot, aggregate states of polycomb
+```{r}
+mono_macro <- rbind(monocyte,macrophage)[-1]
+mono_macro
+mono_macro_mean <- mono_macro %>% group_by(chrom_state,CELL_TYPE) %>% summarise(pp=mean(pp), poe=mean(poe))
+mono_macro_mean <- mono_macro_mean[mono_macro_mean$chrom_state %in% c('E6','E7','E5'),]
+mono_macro_mean_state <- mono_macro_mean %>% group_by(CELL_TYPE) %>% summarise(pp=mean(pp), poe=mean(poe))
+ggplot(mono_macro_mean_state, aes(x = pp, y = poe,col=CELL_TYPE)) + 
+        geom_point() + geom_hline(yintercept = 0) + ggtitle('Monocyte vs Macrophage  via ChAs - PP vs POE in polycomb states')  + theme(legend.text = element_text(size = 4),plot.title = element_text(size=9,colour = 'blue',face = 'bold')) + labs(x='ChAs for Promoter-Promoter',y='ChAs for Promoter-Other Ends') + scale_color_discrete(name='Cell types')
+
+ggsave('Monocyte vs Macrophage  via ChAs - PP vs POE in polycomb states.pdf',width = 7, height = 4.5)
+macrophage_fig
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
