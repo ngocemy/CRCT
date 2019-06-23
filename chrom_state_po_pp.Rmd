@@ -1,0 +1,73 @@
+---
+title: "Separating PP and PO network, using chaser to cal chas for chromatin state"
+output: html_notebook
+---
+
+
+```{r message=F}
+#library(devtools)
+#devtools::install_bitbucket("eraineri/chaser", build_opts=c())
+library(chaser)
+library(tidyverse)
+```
+
+```{r}
+PCHiC_map <- read_tsv("/Users/caotranbichngoc/Desktop/RERUN-THESIS/chromhmm/PCHiCJavierreCell2016_merged_samples_12Apr2015_full.txt",  col_types = cols(oeChr = col_character(), baitChr = col_character()))
+PCHiC_map$baitChr <- paste("chr", PCHiC_map$baitChr, sep = "")
+PCHiC_map$oeChr <- paste("chr", PCHiC_map$oeChr, sep = "")
+PCHiC_wt <- PCHiC_map[any(PCHiC_map[, c(12:28)] > 5), ]
+
+PCHiC_wt<-as.data.frame(PCHiC_wt[,c(1:3,6:8,12:ncol(PCHiC_wt))])
+
+colnames(PCHiC_wt)<-NULL
+net<- chaser::make_chromnet(PCHiC_wt)
+```
+
+```{r}
+path<-"/Volumes/PETITPOIVRE/Ngoc_CRCT/8th week/Carrillo2017_chromatinstatesBP/SEGMENTATION"
+list_file<-list.files("/Volumes/PETITPOIVRE/Ngoc_CRCT/8th week/Carrillo2017_chromatinstatesBP/SEGMENTATION")
+path_files<-paste(path,list_file,sep = '/')
+```
+
+
+```{r}
+cal_chro_state <- function(path_file,featname){
+  net_feat <-chaser::load_features(net,path_file,type="chromhmm", featname = featname)
+  baits <- unique(chaser::export(net_feat, "edges")$node_from)
+  netbb <- chaser::subset_chromnet(net_feat, method="nodes", nodes1=baits)
+
+  tmp <- unique(chaser::export(net_feat, "edges")$node_to)
+  oes <- tmp[!(tmp %in% baits)]
+  netbo <- chaser::subset_chromnet(net_feat, method="nodes", nodes1=baits, nodes2=oes)
+  net_chas_bb <- chaser::chas(netbb)
+  net_chas_boe <- chaser::chas(netbo)
+  return(list(net_chas_bb=net_chas_bb,net_chas_boe=net_chas_boe))
+}
+```
+net_chas$features
+```{r}
+  list<-c('E4','E6','E5','E7','E3','E8','E11','E10','E1','E2','E9')
+  data_chas_pp <- data_frame(row.names = list)
+  data_chas_poe <- data_frame(row.names = list)
+  for (i in 1:99){
+    print(i)
+    data_chas <- cal_chro_state(path_files[i],basename(path_files[i]))
+    data_chas_pp[,i] <-unlist(data_chas[1])
+    data_chas_poe[,i] <-unlist(data_chas[2])
+    colnames(data_chas_pp)[i]<-basename(path_files[i])
+    colnames(data_chas_poe)[i]<-basename(path_files[i])
+    rownames(data_chas_pp)<-list    
+    rownames(data_chas_poe)<-list
+
+  }
+    chas_t_pp<-as.data.frame(t(data_chas_pp))
+    chas_t_poe<-as.data.frame(t(data_chas_poe))
+    chas_t_pp$file_name <- rownames(chas_t_pp)
+    chas_t_poe$file_name <- rownames(chas_t_poe)
+write_csv(chas_t_pp,path='/Users/caotranbichngoc/Desktop/RERUN-THESIS/chromhmm/chromhmm_chas_pp_chaser.csv')
+write_csv(chas_t_poe,path='/Users/caotranbichngoc/Desktop/RERUN-THESIS/chromhmm/chromhmm_chas_poe_chaser.csv')
+
+```
+
+
+
