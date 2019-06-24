@@ -1,0 +1,156 @@
+---
+title: "Using ChaseR to calculate chipseq assortativity for H3K27me3 (GRch37)"
+output: html_notebook
+---
+
+```{r message=FALSE}
+library(readr)
+library(chaser)
+library(stringr)
+
+library(igraph)
+library(GenomicRanges)
+library(data.table)
+
+library(tidyverse)
+```
+
+
+
+- Using ChaseR
+
+```{r}
+library(chaser)
+```
+
+- H3K27ac
+```{r}
+#Try to gunzip the files before by terminal
+healthy_files <- list.files('/home/ngoc/Desktop/Ngoc_CRCT/10th week/h3k27ac_grchr37')
+healthy_name <- lapply(healthy_files, str_extract,pattern='[\\w\\d{2}]+')
+file_paths <- paste('/home/ngoc/Desktop/Ngoc_CRCT/10th week/h3k27ac_grchr37',healthy_files,sep = '/')
+```
+
+
+
+```{r}
+PCHiC_map <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/PCHiCJavierreCell2016_merged_samples_12Apr2015_full.txt",  col_types = cols(oeChr = col_character(), baitChr = col_character()))
+PCHiC_map <- PCHiC_map[any(PCHiC_map[, c(12:28)] > 5), ]
+
+PCHiC_map <- as.data.frame(PCHiC_map[,c(1:3,6:8)])
+PCHiC_map$baitChr <- paste0('chr',PCHiC_map$baitChr)
+PCHiC_map$oeChr <- paste0('chr',PCHiC_map$oeChr)
+colnames(PCHiC_map) <- NULL
+file_names <- basename(file_paths)
+sample_name <- str_extract(file_names,'[\\w\\d{2}]+')
+chas_list <- tibble(sample_name)
+chas_list$chas <- 'NA'
+chas_list$chas_pp <- 'NA'
+chas_list$chas_poe <- 'NA'
+chas_list$abundance <- 'NA'
+for (i in 1:length(file_paths)){
+net <- make_chromnet(PCHiC_map)
+net_feat <- load_features(net,file_paths[i],type='macs2',featname = 'h3k27ac')
+chas_list[i,2] <- chas(net_feat)
+baits <- unique(chaser::export(net_feat, "edges")$node_from)
+netbb <- chaser::subset_chromnet(net_feat, method="nodes", nodes1=baits)
+chas_list[i,3] <- chas(netbb) 
+
+tmp <- unique(chaser::export(net_feat, "edges")$node_to)
+oes <- tmp[!(tmp %in% baits)]
+netbo <- chaser::subset_chromnet(net_feat, method="nodes", nodes1=baits, nodes2=oes)
+print(netbo)
+chas_list[i,4] <- chas(netbo)
+chas_list[i,5] <- mean(net_feat$features[,1])
+}
+save(chas_list,file = '/home/ngoc/Desktop/Ngoc_CRCT/10th week/chas_chaseR_h3k27ac_healthy_javierenet.RData')
+```
+
+
+```{r}
+load("/home/ngoc/Desktop/Ngoc_CRCT/10th week/chas_chaseR_h3k27ac_healthy_javierenet.RData")
+disease_sample_name <- unique(annotation[-which(annotation$DISEASE == 'None'),9])
+chas_list <-chas_list[-which(chas_list$sample_name %in% disease_sample_name$SAMPLE_NAME),]
+o <- as.data.frame(unique(annotation[which(annotation$SAMPLE_NAME %in% chas_list$sample_name),c(9,27)]))
+
+chas_list <- merge(o,chas_list,by.x='SAMPLE_NAME',by.y='sample_name')
+chas_list <- chas_list[!apply(is.na(chas_list),1,any),]
+chas_list_num <- transform(chas_list,chas=as.numeric(chas),chas_poe=as.numeric(chas_poe),chas_pp=as.numeric(chas_pp),abundance=as.numeric(abundance))
+chas_list_mean <- aggregate(by=list(chas_list_num[,2]),chas_list_num[,c(4,5)],mean)
+colnames(chas_list_mean)[1] <- 'CELL_TYPE'
+
+
+ggplot(chas_list_mean,aes(x=chas_pp,y=chas_poe,col=CELL_TYPE,label=CELL_TYPE)) + geom_point()   +    labs(x='ChAs for Promoter-Promoter',y='ChAs for Promoter-Other Ends') + ggtitle('ChAs PP-POE H3K27ac ChIP-seq') +geom_text(size=2.6,hjust=0,vjust=1)+xlim(0.17,0.34) + ylim(0.05,0.125)
+```
+
+(Remember to draw pp vs abundance)
+```{r}
+chas_list_mean <- aggregate(by=list(chas_list_num[,2]),chas_list_num[,c(4,6)],mean)
+colnames(chas_list_mean)[1] <- 'CELL_TYPE'
+
+ggplot(chas_list_mean,aes(y=chas_pp,x=abundance,col=CELL_TYPE,label=CELL_TYPE)) + geom_point()   +    labs(y='ChAs for Promoter-Promoter',x='Abundance') + ggtitle('Abundance vs ChAs PP H3K27ac ChIP-seq') +geom_text(size=2.6,hjust=0,vjust=1)+ ylim(0.1,0.3)+ xlim(0.001,0.02)
+```
+
+- H3K27me3
+```{r}
+file_paths <- file.path('/home/ngoc/Desktop/Ngoc_CRCT/9th week/Disease_CHIPseq_BLUEPRINT/grchr37',list.files('/home/ngoc/Desktop/Ngoc_CRCT/9th week/Disease_CHIPseq_BLUEPRINT/grchr37'))
+```
+
+
+```{r}
+PCHiC_map <- read_tsv("/home/ngoc/Desktop/Ngoc_CRCT/1st week/data/monocyte/PCHiCJavierreCell2016_merged_samples_12Apr2015_full.txt",  col_types = cols(oeChr = col_character(), baitChr = col_character()))
+PCHiC_map <- PCHiC_map[any(PCHiC_map[, c(12:28)] > 5), ]
+
+PCHiC_map <- as.data.frame(PCHiC_map[,c(1:3,6:8)])
+PCHiC_map$baitChr <- paste0('chr',PCHiC_map$baitChr)
+PCHiC_map$oeChr <- paste0('chr',PCHiC_map$oeChr)
+colnames(PCHiC_map) <- NULL
+net <- make_chromnet(PCHiC_map)
+
+file_names <- basename(file_paths)
+sample_name <- str_extract(file_names,'[\\w\\d{2}]+')
+chas_list <- tibble(sample_name)
+chas_list$chas <- 'NA'
+chas_list$chas_pp <- 'NA'
+chas_list$chas_poe <- 'NA'
+chas_list$abundance <- 'NA'
+for (i in 1:length(file_paths)){
+net_feat <- load_features(net,file_paths[i],type='macs2',featname = 'h3k27me3')
+chas_list[i,2] <- chas(net_feat)
+baits <- unique(chaser::export(net_feat, "edges")$node_from)
+netbb <- chaser::subset_chromnet(net_feat, method="nodes", nodes1=baits)
+chas_list[i,3] <- chas(netbb) 
+
+tmp <- unique(chaser::export(net_feat, "edges")$node_to)
+oes <- tmp[!(tmp %in% baits)]
+netbo <- chaser::subset_chromnet(net_feat, method="nodes", nodes1=baits, nodes2=oes)
+print(netbo)
+chas_list[i,4] <- chas(netbo)
+chas_list[i,5] <- mean(net_feat$features[,1])
+}
+save(chas_list,file = '/home/ngoc/Desktop/Ngoc_CRCT/10th week/chas_chaseR_h3k27me3_healthy_javierenet.RData')
+```
+
+
+```{r}
+disease_sample_name <- unique(annotation[which(annotation$DISEASE != 'None'),9])
+chas_list <-chas_list[-which(chas_list$sample_name %in% disease_sample_name$SAMPLE_NAME),]
+o <- as.data.frame(unique(annotation[which(annotation$SAMPLE_NAME %in% chas_list$sample_name),c(9,27)]))
+
+chas_list <- merge(o,chas_list,by.x = 'SAMPLE_NAME',by.y = 'sample_name')
+chas_list <- chas_list[!apply(is.na(chas_list),1,any),]
+chas_list_num <- transform(chas_list,chas=as.numeric(chas),chas_poe=as.numeric(chas_poe),chas_pp=as.numeric(chas_pp),abundance=as.numeric(abundance))
+chas_list_mean <- aggregate(by=list(chas_list_num[,2]),chas_list_num[,c(4,5)],mean)
+colnames(chas_list_mean)[1] <- 'CELL_TYPE'
+
+
+ggplot(chas_list_mean,aes(x=chas_pp,y=chas_poe,col=CELL_TYPE,label=CELL_TYPE)) + geom_point()   +    labs(x='ChAs for Promoter-Promoter',y='ChAs for Promoter-Other Ends') + ggtitle('ChAs PP-POE H3K27me3 ChIP-seq') +geom_text(size=2.6,hjust=0,vjust=1)+xlim(0.175,0.34)
+```
+
+
+```{r}
+chas_list_mean <- aggregate(by=list(chas_list_num[,2]),chas_list_num[,c(4,6)],mean)
+colnames(chas_list_mean)[1] <- 'CELL_TYPE'
+
+ggplot(chas_list_mean,aes(y=chas_pp,x=abundance,col=CELL_TYPE,label=CELL_TYPE)) + geom_point()   +    labs(y='ChAs for Promoter-Promoter',x='Abundance') + ggtitle('Abundance vs ChAs PP H3K27me3 ChIP-seq') +geom_text(size=2.6,hjust=0,vjust=1) + xlim(-0.001,0.069)
+```
