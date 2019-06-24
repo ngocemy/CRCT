@@ -1,0 +1,222 @@
+---
+title: "R Notebook to calculate chas of expression data"
+output: html_notebook
+---
+
+```{r}
+
+## ----eval=FALSE----------------------------------------------------------
+  #library(devtools)
+  #devtools::install_bitbucket("eraineri/chaser", build_opts=c())
+
+library(chaser)#############
+bp=read.table('/home/vera/BACKUP_HomeCNIO_August2017/Vera/Blueprint_Dani/PChiC/BP/PCHiCdataBP/merged_samples_12Apr2015_full.txt', sep='\t', skip=4, header=T)
+
+bpproc=bp
+bpproc[,1]=paste('Chr',bp[,1], sep='')
+bpproc[,6]=paste('Chr',bp[,6], sep='')
+
+
+monoexp=read.table('/mnt/SERVER-CRCT-STORAGE/CRCT21/Private/Ngoc/Ngoc/epivar_data/mono_gene_nor_combat_20151109.txt_sort', sep='\t', header=T)
+neutroexp=read.table('/mnt/SERVER-CRCT-STORAGE/CRCT21/Private/Ngoc/Ngoc/epivar_data/neut_gene_nor_combat_20151109.txt_sort', sep='\t', header=T)
+texp=read.table('/mnt/SERVER-CRCT-STORAGE/CRCT21/Private/Ngoc/Ngoc/epivar_data/tcel_gene_nor_combat_20151109.txt_sort', sep='\t', header=T)
+
+conv=read.delim('/mnt/SERVER-CRCT-STORAGE/CRCT21/Private/common/forGARDEN-NET/biomart/BLUEPRINT_fragments.tsv', sep='\t')
+
+monoexp_pro=monoexp
+monoexp_pro[,1]=sapply(as.vector(monoexp_pro[,1]),function(x){
+  res=x
+  if (grep('\\.', x)){
+    vec=unlist(strsplit(x, split='\\.'))
+    res=vec[1]
+  }  
+  return(res)
+})
+
+
+neuexp_pro=neutroexp
+neuexp_pro[,1]=sapply(as.vector(neuexp_pro[,1]),function(x){
+  res=x
+  if (grep('\\.', x)){
+    vec=unlist(strsplit(x, split='\\.'))
+    res=vec[1]
+  }  
+  return(res)
+})
+
+texp_pro=texp
+texp_pro[,1]=sapply(as.vector(texp_pro[,1]),function(x){
+  res=x
+  if (grep('\\.', x)){
+    vec=unlist(strsplit(x, split='\\.'))
+    res=vec[1]
+  }  
+  return(res)
+})
+
+rownames(monoexp_pro)=monoexp_pro[,1]
+rownames(neuexp_pro)=neuexp_pro[,1]
+rownames(texp_pro)=texp_pro[,1]
+
+
+convpro=data.frame(conv$range, conv$ensembl)
+rownames(convpro)=convpro$conv.range
+colnames(convpro)[2]='ens.id'
+
+
+m=merge( convpro,monoexp_pro, by='ens.id', all.x=F, all.y=F)
+rownames(m)=m$conv.range
+m=m[,-c(1,2)]
+rownames(m)=paste('chr',rownames(m), sep='')
+m=data.frame(m, rowMeans(m))
+
+n=merge( convpro,neuexp_pro, by='ens.id', all.x=F, all.y=F)
+rownames(n)=n$conv.range
+n=n[,-c(1,2)]
+rownames(n)=paste('chr',rownames(n), sep='')
+n=data.frame(n, rowMeans(n))
+
+t=merge( convpro,texp_pro, by='ens.id', all.x=F, all.y=F)
+rownames(t)=t$conv.range
+t=t[,-c(1,2)]
+rownames(t)=paste('chr',rownames(t), sep='')
+t=data.frame(t, rowMeans(t))
+
+
+netbpexp=chaser::make_chromnet(bp_forchaser)
+
+baits <- unique(chaser::export(netbp, "edges")$node_from)
+bpnetbbexp <- chaser::subset_chromnet(netbpexp, method="nodes", nodes1=baits)
+# extract other ends
+tmp <- unique(chaser::export(netbpexp, "edges")$node_to)
+oes <- tmp[!(tmp %in% baits)]
+
+bpnetbbexp <- load_features(bpnetbbexp,m,type='data.frame',featname = colnames(m), missingv=0)
+
+bpnetbbexpfeat=export(bpnetbbexp)
+
+
+bpnetbbexpchas=chas(bpnetbbexp)
+
+
+
+###make specific network
+bpmono_forchaser=bp[which(bp$Monocytes>=5),c(1,2,3,6,7,8)]
+bpneu_forchaser=bp[which(bp$Neutrophils>=5),c(1,2,3,6,7,8)]
+bpt_forchaser=bp[which(rowMeans(bp[,c(21:26)])>=5),c(1,2,3,6,7,8)]
+
+mononet=chaser::make_chromnet(bpmono_forchaser)
+neunet=chaser::make_chromnet(bpneu_forchaser)
+tnet=chaser::make_chromnet(bpt_forchaser)
+
+mononetbb <- chaser::subset_chromnet(mononet, method="nodes", nodes1=baits)
+neunetbb <- chaser::subset_chromnet(neunet, method="nodes", nodes1=baits)
+tnetbb <- chaser::subset_chromnet(tnet, method="nodes", nodes1=baits)
+
+mononetbbmini <- load_features(mononetbb,m[,c('S013K7','rowMeans.m.')],type='data.frame',featname = meanexp, missingv=0)
+
+
+mononetbbexp <- load_features(mononetbb,m,type='data.frame',featname = colnames(m), missingv=0)
+mononetbbexpchas=chas(mononetbbexp)
+mononetbbexpfeat=export(mononetbbexp)
+
+neunetbbexp <- load_features(neunetbb,n,type='data.frame',featname = colnames(n), missingv=0)
+neunetbbexpchas=chas(neunetbbexp)
+neunetbbexpfeat=export(neunetbbexp)
+
+tnetbbexp <- load_features(tnetbb,t,type='data.frame',featname = colnames(t), missingv=0)
+tnetbbexpchas=chas(tnetbbexp)
+tnetbbexpfeat=export(tnetbbexp)
+
+
+pdf('/mnt/SERVER-CRCT-STORAGE/CRCT21/Private/Ngoc/Results/EpivarChenHistonMods/Epivar_exp_abchas.pdf')
+plot(colMeans(mononetbbexpfeat), mononetbbexpchas, xlab="exp ab",
+     ylab='chas PP', axes=FALSE,   pch=20, main='Monocytes')
+axis(1)
+axis(2)
+
+plot(colMeans(neunetbbexpfeat), neunetbbexpchas, xlab="exp ab",
+   ylab='chas PP',  pch=20, col='blue', main='Neutrophils')
+axis(1)
+axis(2)
+plot(colMeans(tnetbbexpfeat), tnetbbexpchas, xlab="exp ab",
+   ylab='chas PP',   pch=20, col='green', main='Tcells')
+axis(1)
+axis(2)
+#text(bpepichasbb[sel], bpepichasbo[sel],col=cols, names(bpepichasbb)[sel], cex=0.7)
+
+#legend(x=0,1, y=0.2,legend=levels(df$CELL_TYPE), col=mycol)
+dev.off()
+
+bpnetbbnewexp <- load_features(bpnetbb,m['rowMeans.m.'],type='data.frame',featname = 'monoexp', missingv=0)
+featbpepibbnewexp=export(bpnetbbnewexp)
+
+bpnetbbnewexpchas=chas(bpnetbbnewexp)
+
+
+###randomization
+
+rmonoexp <- chaser::randomize(mononetbbexp, nrandom=50, preserve.nodes = NULL,dist.match = T)
+rmonoexp_chas <-lapply(rmonoexp, chas)
+ 
+
+rmonoexp_feat=lapply(rmonoexp, export)
+
+pdf('/mnt/SERVER-CRCT-STORAGE/CRCT21/Private/Ngoc/Results/EpivarChenHistonMods/Epivar_exp_MonoRandDist_abchas.pdf')
+plot(colMeans(rmonoexp_feat[[1]]),rmonoexp_chas[[1]], pch='.', ylim=c(0.02,0.11), col='red', xlab='Mean expression Monocytes', ylab='ChAs on PP network') 
+for (i in 2:50){
+ points(colMeans(rmonoexp_feat[[i]]),rmonoexp_chas[[i]], pch='.') 
+}
+points(colMeans(mononetbbexpfeat), mononetbbexpchas,  pch=20)
+dev.off()
+
+rneuexp <- chaser::randomize(neunetbbexp, nrandom=50, preserve.nodes = NULL,dist.match = T)
+rneuexp_chas <-lapply(rneuexp, chas)
+  
+rneuexp_feat=lapply(rneuexp, export)
+
+pdf('/mnt/SERVER-CRCT-STORAGE/CRCT21/Private/Ngoc/Results/EpivarChenHistonMods/Epivar_exp_neuRandDist_abchas.pdf')
+plot(colMeans(rneuexp_feat[[1]]),rneuexp_chas[[1]], pch='.', ylim=c(0.02,0.15), col='red', xlab='Mean expression neutrophils', ylab='ChAs on PP network') 
+for (i in 2:50){
+ points(colMeans(rneuexp_feat[[i]]),rneuexp_chas[[i]], pch='.') 
+}
+points(colMeans(neunetbbexpfeat), neunetbbexpchas,  pch=20)
+dev.off()
+
+###from Ema
+tbl <- readRDS("neunetbbexp.rds")
+rnet <- randomize(neunetbbexp, nrandom=50)
+> length(rnet)
+[1] 50
+
+> rnet[[50]]
+edges: 19354
+nodes: 11566
+24 chromosome(s)
+197  feature(s)
+
+lfeat <- lapply(rnet, export)
+lapply(lfeat, dim)
+
+#########
+
+
+###Now do randomization with permutation
+rpneuexp <- chaser::randomize(neunetbbexp, nrandom=50, preserve.nodes = NULL,dist.match = F)
+
+
+rpneuexp_chas <-lapply(rpneuexp, chas)
+rpneuexp_feat=lapply(rpneuexp, export)
+
+pdf('/mnt/SERVER-CRCT-STORAGE/CRCT21/Private/Ngoc/Results/EpivarChenHistonMods/Epivar_exp_neuRand_abchas.pdf')
+plot(colMeans(rpneuexp_feat[[1]]),rpneuexp_chas[[1]], pch='.', ylim=c(-0.02,0.15),  xlab='Mean expression neutrophils', ylab='ChAs on PP network') 
+for (i in 2:50){
+ points(colMeans(rpneuexp_feat[[i]]),rpneuexp_chas[[i]], pch='.') 
+}
+points(colMeans(neunetbbexpfeat), neunetbbexpchas,  pch=20)
+dev.off()
+
+```
+
+
+```{r}
